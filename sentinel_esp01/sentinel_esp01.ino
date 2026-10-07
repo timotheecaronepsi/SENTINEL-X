@@ -1,11 +1,11 @@
 // Sentinel-X — firmware du nœud esp01 (ESP32 DevKit V1)
-// Capteur de gaz MQ-135 + GPS Grove Air530 + détecteur de mouvement PIR + lumière de présence
+// Capteur de gaz MQ-135 + GPS Grove Air530 + radar (HC-SR04 sur servo SG90) + lumière de présence
 //
 // Fichiers du croquis :
 //   sentinel_esp01.ino  Wi-Fi, MQTT, publication de la télémétrie (ce fichier)
 //   gaz.ino             capteur de gaz MQ-135
 //   gps.ino             GPS Grove Air530
-//   pir.ino             détecteur de mouvement infrarouge
+//   radar.ino           radar à ultrasons qui balaie la pièce
 //   lumiere.ino         lumière allumée en cas de présence la nuit
 //   secrets.h           mots de passe, hors Git (modèle : secrets.example.h)
 #if !defined(ESP32)
@@ -47,7 +47,7 @@ void publishTelemetry() {
   doc["node"] = NODE_ID; doc["ts"] = nowTs();
   gasToJson(doc);
   gpsToJson(doc);
-  pirToJson(doc);
+  radarToJson(doc);
   lightToJson(doc);
   if (WiFi.status() == WL_CONNECTED) doc["rssi"] = WiFi.RSSI();
   char buf[512];
@@ -75,6 +75,9 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
+  // Réduit les pics de courant du Wi-Fi (alimentation USB partagée avec le servo) :
+  WiFi.setSleep(false);                  // pas de réveils périodiques par à-coups
+  WiFi.setTxPower(WIFI_POWER_11dBm);     // puissance réduite : le point d'accès est à côté
   configTime(0, 0, NTP_SERVER);
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setBufferSize(768);
@@ -82,7 +85,7 @@ void setup() {
 
   gasSetup();
   gpsSetup();
-  pirSetup();
+  radarSetup();
   lightSetup();   // après configTime : règle le fuseau horaire de Paris
 }
 
@@ -90,7 +93,7 @@ void loop() {
   uint32_t now = millis();
   gasLoop();
   gpsLoop();
-  pirLoop();
+  radarLoop();
   lightLoop();
 
   static bool wifiUp = false;
@@ -98,9 +101,20 @@ void loop() {
     if (!wifiUp) { wifiUp = true; Serial.printf("[WIFI] Connecté, IP %s\n", WiFi.localIP().toString().c_str()); }
     if (mqtt.connected()) mqtt.loop();
     else if (now - lastMqttTry >= 5000) { lastMqttTry = now; connectMqtt(); }
-  } else if (wifiUp) {
-    wifiUp = false;
-    Serial.println("[WIFI] Perdu, reconnexion automatique...");
+  } else {
+    if (wifiUp) { wifiUp = false; Serial.println("[WIFI] Perdu, reconnexion automatique..."); }
+    static uint32_t lastWifiReport = 0;
+    if (now - lastWifiReport >= 10000) {        // diagnostic toutes les 10 s
+      lastWifiReport = now;
+      wl_status_t st = WiFi.status();
+      const char* why =
+        st == WL_NO_SSID_AVAIL   ? "réseau introuvable (nom faux, point d'accès éteint ou en 5 GHz)" :
+        st == WL_CONNECT_FAILED  ? "connexion refusée (mot de passe faux ?)" :
+        st == WL_CONNECTION_LOST ? "connexion perdue" :
+                                   "tentative en cours";
+      Serial.printf("[WIFI] Pas connecté à \"%s\" : %s\n", WIFI_SSID, why);
+      if (st == WL_NO_SSID_AVAIL || st == WL_CONNECT_FAILED) { WiFi.disconnect(); WiFi.begin(WIFI_SSID, WIFI_PASS); }
+    }
   }
 
   if (now - lastPublish >= PUBLISH_MS) { lastPublish = now; publishTelemetry(); }

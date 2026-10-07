@@ -1,10 +1,10 @@
-// Lumière de présence : s'allume quand le PIR détecte quelqu'un ET qu'il fait nuit
-// Pour l'instant : LED bleue intégrée à l'ESP32 (GPIO2), aucun câblage.
+// Lumière de présence : s'allume quand le radar détecte quelqu'un ET qu'il fait nuit
+// Câblage : D25 -> 220 Ω -> patte longue de la LED ; patte courte -> GND
 // Pour une vraie lampe plus tard : changer LIGHT_PIN, et passer par un transistor ou un relais
 // (jamais une lampe directement sur une broche de l'ESP32).
 
 const uint8_t  LIGHT_PIN    = 25;       // LED externe sur D25 (résistance 220 Ω) ; 2 = LED bleue de la carte
-const uint32_t LIGHT_ON_MS  = 30000;    // reste allumée 30 s après la dernière présence
+const uint32_t LIGHT_ON_MS  = 15000;    // reste allumée 15 s après la dernière présence
 
 // Comment savoir s'il fait nuit :
 //   0 = toujours (pour tester ou pour la démo en journée)
@@ -56,13 +56,12 @@ void lightLoop() {
   lastCheck = now;
 
   darkState = isDark();
-  if (pirPresence() && darkState) { lastLightTrigger = now; lightEverTriggered = true; }
+  if (radarPresence() && darkState) { lastLightTrigger = now; lightEverTriggered = true; }
 
   bool shouldBeOn = lightEverTriggered && (now - lastLightTrigger < LIGHT_ON_MS);
   if (shouldBeOn != lightOn) {
     lightOn = shouldBeOn;
     digitalWrite(LIGHT_PIN, lightOn ? HIGH : LOW);
-    pirBlankAfterLightSwitch();   // la commutation de la LED ne doit pas relancer le PIR
     Serial.println(lightOn ? "[LUMIERE] Allumée (présence la nuit)" : "[LUMIERE] Éteinte");
   }
 }
