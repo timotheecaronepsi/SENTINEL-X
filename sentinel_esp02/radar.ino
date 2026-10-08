@@ -1,7 +1,8 @@
 // Radar : capteur à ultrasons HC-SR04 monté sur un servo SG90 qui balaie de 10° à 170°
 // Bibliothèque : "ESP32Servo" (Kevin Harrington)
-// Câblage : servo orange -> D26, rouge -> 5 V, marron -> GND
-//           HC-SR04 Trig -> D27, Echo -> pont 3 x 220 Ω -> D14, Vcc -> 5 V, Gnd -> GND
+// Câblage (mini breadboard) :
+//   servo  jaune/orange -> D26, rouge -> ligne 5 V (VIN), marron -> ligne GND
+//   HC-SR04 Trig -> D27, Echo -> pont 3 x 220 Ω -> D14, Vcc -> ligne 5 V, Gnd -> ligne GND
 //
 // Principe : au démarrage, le radar apprend la pièce vide (distance habituelle à chaque angle).
 // Ensuite, un objet nettement plus proche que d'habitude, vu sur 2 balayages de suite,
@@ -16,7 +17,7 @@ const int   R_ANGLE_MIN  = 10;        // le SG90 force en butée à 0° et 180°
 const int   R_ANGLE_MAX  = 170;
 const int   R_ANGLE_STEP = 10;
 const int   R_N          = (R_ANGLE_MAX - R_ANGLE_MIN) / R_ANGLE_STEP + 1;   // 17 angles
-const uint32_t R_SETTLE_MS = 120;     // temps pour que le servo arrive avant la mesure
+const uint32_t R_SETTLE_MS = 120;     // pause à chaque angle avant la mesure (plus grand = balayage plus lent)
 const float R_MAX_CM     = 400;       // pas d'écho = « rien jusqu'à 4 m »
 const int   R_CALIB      = 3;         // balayages d'apprentissage de la pièce vide
 const float R_MARGIN_CM  = 30;        // un objet doit être au moins 30 cm plus proche que d'habitude...
@@ -78,14 +79,26 @@ void radarPublishSweep() {
   if (mqtt.connected()) mqtt.publish(topicRadar, buf);
 }
 
+// Affiche une ligne de distances dans le moniteur série (« -- » = pas d'écho)
+void radarPrint(const char* title, const float* d) {
+  Serial.print(title);
+  for (int i = 0; i < R_N; i++) {
+    if (d[i] >= R_MAX_CM) Serial.printf(" %d°:--", R_ANGLE_MIN + i * R_ANGLE_STEP);
+    else Serial.printf(" %d°:%.0f", R_ANGLE_MIN + i * R_ANGLE_STEP, d[i]);
+  }
+  Serial.println();
+}
+
 void radarProcessSweep() {
   radarPublishSweep();
+  radarPrint("[RADAR]", rSweep);
 
   if (rCalibDone < R_CALIB) {            // apprentissage : distance la plus grande vue à chaque angle
     for (int i = 0; i < R_N; i++)
       rBaseline[i] = rCalibDone == 0 ? rSweep[i] : max(rBaseline[i], rSweep[i]);
     rCalibDone++;
     Serial.printf("[RADAR] Apprentissage %d/%d\n", rCalibDone, R_CALIB);
+    if (rCalibDone == R_CALIB) radarPrint("[RADAR] Pièce vide apprise :", rBaseline);
     return;
   }
 

@@ -1,21 +1,21 @@
-// Sentinel-X — firmware du nœud esp01 (ESP32 DevKit V1)
-// Capteur de gaz MQ-135 + GPS Grove Air530
-// (le radar et la lumière sont sur l'autre ESP : voir sentinel_esp02)
+// Sentinel-X — firmware du nœud esp02 (ESP32 DevKit V1)
+// Radar (HC-SR04 sur servo SG90) + lumière de présence
+// (le gaz et le GPS sont sur l'autre ESP : voir sentinel_esp01)
 //
 // Fichiers du croquis :
-//   sentinel_esp01.ino  Wi-Fi, MQTT, publication de la télémétrie (ce fichier)
-//   gaz.ino             capteur de gaz MQ-135
-//   gps.ino             GPS Grove Air530
+//   sentinel_esp02.ino  Wi-Fi, MQTT, publication de la télémétrie (ce fichier)
+//   radar.ino           radar à ultrasons qui balaie la pièce
+//   lumiere.ino         lumière allumée en cas de présence
 //   secrets.h           mots de passe, hors Git (modèle : secrets.example.h)
+//
+// Bibliothèques : PubSubClient, ArduinoJson, ESP32Servo
 #if !defined(ESP32)
   #error "Ce firmware vise l'ESP32 : choisir la carte DOIT ESP32 DEVKIT V1"
 #endif
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <TinyGPS++.h>
 #include <time.h>
-#include <sys/time.h>
 #include "secrets.h"
 
 const uint32_t PUBLISH_MS = 5000;   // télémétrie toutes les 5 s
@@ -25,7 +25,7 @@ PubSubClient mqtt(net);
 char topicTelemetry[64], topicAlerts[64], topicStatus[64];
 uint32_t lastPublish = 0, lastMqttTry = 0;
 
-// Horodatage Unix : 0 tant que l'heure n'est donnée ni par le GPS ni par NTP
+// Horodatage Unix : 0 tant que l'heure n'est pas donnée par NTP
 uint32_t nowTs() {
   time_t t = time(nullptr);
   return t > 1700000000 ? (uint32_t)t : 0;
@@ -44,10 +44,10 @@ void publishAlert(const char* type, const char* level, float value) {
 void publishTelemetry() {
   JsonDocument doc;
   doc["node"] = NODE_ID; doc["ts"] = nowTs();
-  gasToJson(doc);
-  gpsToJson(doc);
+  radarToJson(doc);
+  lightToJson(doc);
   if (WiFi.status() == WL_CONNECTED) doc["rssi"] = WiFi.RSSI();
-  char buf[384];
+  char buf[256];
   serializeJson(doc, buf);
   Serial.printf("[TELEMETRY] %s\n", buf);
   if (mqtt.connected()) mqtt.publish(topicTelemetry, buf);
@@ -64,7 +64,7 @@ void connectMqtt() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n=== Sentinel-X / " NODE_ID " (gaz + GPS) ===");
+  Serial.println("\n=== Sentinel-X / " NODE_ID " (radar + lumière) ===");
   snprintf(topicTelemetry, sizeof(topicTelemetry), "sentinel/%s/%s/telemetry", TABLE_ID, NODE_ID);
   snprintf(topicAlerts, sizeof(topicAlerts), "sentinel/%s/%s/alerts", TABLE_ID, NODE_ID);
   snprintf(topicStatus, sizeof(topicStatus), "sentinel/%s/%s/status", TABLE_ID, NODE_ID);
@@ -72,7 +72,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  // Réduit les pics de courant du Wi-Fi (alimentation USB partagée avec la chauffe du MQ-135) :
+  // Réduit les pics de courant du Wi-Fi (alimentation USB partagée avec le servo) :
   WiFi.setSleep(false);
   WiFi.setTxPower(WIFI_POWER_11dBm);
   configTime(0, 0, NTP_SERVER);
@@ -80,14 +80,14 @@ void setup() {
   mqtt.setBufferSize(512);
   mqtt.setSocketTimeout(2);
 
-  gasSetup();
-  gpsSetup();
+  radarSetup();
+  lightSetup();   // après configTime : règle le fuseau horaire de Paris
 }
 
 void loop() {
   uint32_t now = millis();
-  gasLoop();
-  gpsLoop();
+  radarLoop();
+  lightLoop();
 
   static bool wifiUp = false;
   if (WiFi.status() == WL_CONNECTED) {

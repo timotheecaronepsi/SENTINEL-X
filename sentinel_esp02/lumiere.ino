@@ -1,14 +1,14 @@
-// Lumière de présence : s'allume quand le radar détecte quelqu'un ET qu'il fait nuit
-// Câblage : D25 -> 220 Ω -> patte longue de la LED ; patte courte -> GND
+// Lumière de présence : s'allume quand le radar détecte quelqu'un (et qu'il fait nuit, selon le mode)
+// Câblage (mini breadboard) : D25 -> 220 Ω -> patte longue de la LED ; patte courte -> ligne GND
 // Pour une vraie lampe plus tard : changer LIGHT_PIN, et passer par un transistor ou un relais
 // (jamais une lampe directement sur une broche de l'ESP32).
 
 const uint8_t  LIGHT_PIN    = 25;       // LED externe sur D25 (résistance 220 Ω) ; 2 = LED bleue de la carte
-const uint32_t LIGHT_ON_MS  = 15000;    // reste allumée 15 s après la dernière présence
+const uint32_t LIGHT_ON_MS  = 30000;    // reste allumée 15 s après la dernière présence
 
 // Comment savoir s'il fait nuit :
 //   0 = toujours (pour tester ou pour la démo en journée)
-//   1 = selon l'heure (donnée par le GPS ou NTP), heure de Paris
+//   1 = selon l'heure (donnée par NTP), heure de Paris
 //   2 = avec un capteur de lumière sur GPIO35 (si vous en obtenez un)
 #define LIGHT_MODE 0   // 0 pour les tests et la démo en journée, 1 pour « la nuit seulement »
 const uint8_t NIGHT_START_H = 19;       // nuit à partir de 19 h ...
@@ -62,7 +62,7 @@ void lightLoop() {
   if (shouldBeOn != lightOn) {
     lightOn = shouldBeOn;
     digitalWrite(LIGHT_PIN, lightOn ? HIGH : LOW);
-    Serial.println(lightOn ? "[LUMIERE] Allumée (présence la nuit)" : "[LUMIERE] Éteinte");
+    Serial.println(lightOn ? "[LUMIERE] Allumée (présence détectée)" : "[LUMIERE] Éteinte");
   }
 }
 
